@@ -8233,6 +8233,10 @@
    && !arm_is_long_call_p (SYMBOL_REF_DECL (operands[0]))"
   "*
   {
+   bool is_swi = arm_is_swicall (SYMBOL_REF_DECL (operands[0]));
+   if (is_swi)
+      return output_swicall (SYMBOL_REF_DECL (operands[0]));
+      
    rtx op = operands[0];
 
    /* Switch mode now when possible.  */
@@ -8257,6 +8261,10 @@
    && !arm_is_long_call_p (SYMBOL_REF_DECL (operands[1]))"
   "*
   {
+    bool is_swi = arm_is_swicall (SYMBOL_REF_DECL (operands[1]));
+    if (is_swi)
+      return output_swicall (SYMBOL_REF_DECL (operands[1]));
+      
    rtx op = operands[1];
 
    /* Switch mode now when possible.  */

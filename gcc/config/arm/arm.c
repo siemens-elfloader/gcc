@@ -308,6 +308,7 @@ static unsigned int arm_elf_section_type_flags (tree decl, const char *name,
 						int reloc);
 static void arm_expand_divmod_libfunc (rtx, machine_mode, rtx, rtx, rtx *, rtx *);
 static machine_mode arm_floatn_mode (int, bool);
+static tree arm_handle_swi_attribute (tree *, tree, tree, int, bool *);
 
 /* Table of machine attributes.  */
 static const struct attribute_spec arm_attribute_table[] =
@@ -330,6 +331,8 @@ static const struct attribute_spec arm_attribute_table[] =
   { "interrupt",    0, 1, false, false, false, arm_handle_isr_attribute,
     false },
   { "naked",        0, 0, true,  false, false, arm_handle_fndecl_attribute,
+    false },
+  { "swi",          1, 1, false, false, false, arm_handle_swi_attribute,
     false },
 #ifdef ARM_PE
   /* ARM/PE has three new attributes:
@@ -6754,6 +6757,46 @@ arm_handle_isr_attribute (tree *node, tree name, tree args, int flags,
   return NULL_TREE;
 }
 
+static tree
+arm_handle_swi_attribute (tree *node, tree name, tree args, int flags,
+			  bool *no_add_attrs)
+{
+  if (DECL_P (*node))
+    {
+      if (TREE_CODE (*node) != FUNCTION_DECL)
+	{
+	  warning (OPT_Wattributes, "%qE attribute only applies to functions",
+		   name);
+	  *no_add_attrs = true;
+	} else {
+          tree cst = TREE_VALUE (args);
+          if (TREE_CODE (cst) != INTEGER_CST)
+            {
+              error ("%qE attribute requires an integer constant argument",
+                     name);
+              *no_add_attrs = true;
+            }
+          else if (TARGET_ARM && (compare_tree_int (cst, 0xFFFFFF) > 0))
+            {
+              error ("argument to %qE attribute larger than 0xFFFFFF",
+                     name);
+              *no_add_attrs = true;
+            }
+          else if (TARGET_THUMB && (compare_tree_int (cst, 0xFF) > 0))
+            {
+              warning (OPT_Wattributes,
+                       "argument to %qE attribute larger than 0xFF", name);
+            }
+        }
+    } else {
+      warning (OPT_Wattributes,
+               "%qE attribute can be applied only to function prototype", name);
+      *no_add_attrs = true;
+    }
+
+  return NULL_TREE;
+}
+
 /* Handle a "pcs" attribute; arguments as in struct
    attribute_spec.handler.  */
 static tree
@@ -7108,6 +7151,67 @@ arm_is_long_call_p (tree decl)
   return TARGET_LONG_CALLS;
 }
 
+bool
+arm_is_swicall (tree decl)
+{
+  tree attrs;
+  tree a;
+
+  if (!decl)
+    return false;
+
+  attrs = DECL_ATTRIBUTES (decl);
+  a = lookup_attribute ("swi", attrs);
+  if (a == NULL_TREE)
+    return false;
+
+  return true;
+}
+
+const char *
+output_swicall (tree decl)
+{
+  tree attrs;
+  tree a;
+  tree cst;
+  int value;
+  char *buf = ggc_alloc_cleared_atomic (32);
+
+  attrs = DECL_ATTRIBUTES (decl);
+  a = lookup_attribute ("swi", attrs);
+  if (TREE_VALUE (a) == NULL_TREE)
+    return "ERROR";
+
+  cst = TREE_VALUE (TREE_VALUE (a));
+  if (TREE_CODE (cst) != INTEGER_CST)
+    return "ERROR1";
+
+  value = TREE_INT_CST_LOW (cst);
+
+  if (TARGET_ARM)
+    {
+      snprintf (buf, 32, "swi%%?\t%d", value);
+    } else {
+      /*
+        SIEMENS-specific
+        Thumb routines normally can call only SWI 0x00 - 0xFF
+        To call 0x100 - 0xFFFF we use a hack - SWI 0xCC with
+        real SWI number after it.  Handler of SWI will load
+        real SWI number and then properly ajust LR register.
+      */
+      if (value > 0xFF)
+        {
+          snprintf (buf, 32, "swi\t0xCC\n\t.short\t%d", value);
+        }
+      else
+        {
+          snprintf (buf, 32, "swi\t%d", value);
+        }
+    }
+
+  return buf;
+}
+
 /* Return nonzero if it is ok to make a tail-call to DECL.  */
 static bool
 arm_function_ok_for_sibcall (tree decl, tree exp)
@@ -7132,6 +7236,10 @@ arm_function_ok_for_sibcall (tree decl, tree exp)
   if (TARGET_APCS_FRAME && TARGET_ARM
       && TARGET_HARD_FLOAT
       && decl && arm_is_long_call_p (decl))
+    return false;
+
+  /* Cannot tail-call to SWI functions for obvious reasons.  */
+  if (arm_is_swicall (decl))
     return false;
 
   /* If we are interworking and the function is not declared static
