@@ -7151,6 +7151,10 @@ arm_is_long_call_p (tree decl)
   return TARGET_LONG_CALLS;
 }
 
+/* Allocates cleared memory.  */
+extern void *ggc_internal_cleared_alloc (size_t
+					 CXX_MEM_STAT_INFO) ATTRIBUTE_MALLOC;
+
 bool
 arm_is_swicall (tree decl)
 {
@@ -7175,7 +7179,7 @@ output_swicall (tree decl)
   tree a;
   tree cst;
   int value;
-  char *buf = ggc_alloc_cleared_atomic (32);
+  char *buf = (char*)ggc_internal_cleared_alloc (32);
 
   attrs = DECL_ATTRIBUTES (decl);
   a = lookup_attribute ("swi", attrs);
